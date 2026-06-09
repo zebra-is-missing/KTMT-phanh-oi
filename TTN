@@ -1,0 +1,559 @@
+# =================================================================
+# CHƯƠNG TRÌNH: THI TRẮC NGHIỆM (RISC-V ARTIFACT) - FIXED REGS
+# Tính năng: Menu, Kiểm tra dữ liệu, MMIO Keyboard/Display, Đếm ngược
+# =================================================================
+
+# --- Khai báo các hằng số địa chỉ MMIO (Memory-Mapped I/O) ---
+.eqv MMIO_CTRL  0xFFFF0000     # Địa chỉ thanh ghi trạng thái (Control) của Keyboard
+.eqv MMIO_DATA  0xFFFF0004     # Địa chỉ thanh ghi dữ liệu (Data) của Keyboard
+.eqv MMIO_DCTRL 0xFFFF0008     # Địa chỉ thanh ghi trạng thái (Control) của Display (Màn hình)
+.eqv MMIO_DDATA 0xFFFF000C     # Địa chỉ thanh ghi dữ liệu (Data) của Display (Màn hình)
+.eqv DIGIT_LEFT   0xFFFF0011   # Địa chỉ điều khiển đèn LED 7 đoạn bên trái
+.eqv DIGIT_RIGHT  0xFFFF0010   # Địa chỉ điều khiển đèn LED 7 đoạn bên phải
+
+.data
+# --- Giao diện và các thông báo chuỗi (String) ---
+menu_title:  .string "\n========== MENU THI TRAC NGHIEM ==========\n"
+menu_opt1:   .string "1. Bat dau thi\n"
+menu_opt2:   .string "2. Thoat chuong trinh\n"
+menu_choos:  .string "Lua chon cua ban (1-2): "
+msg_err:     .string "\nLua chon khong hop le! Vui long nhap lai.\n"
+msg_welcome: .string "\n--- BAT DAU CUOC THI (Moi cau co 10s) ---\n"
+msg_correct: .string "CHINH XAC!\n\n"
+msg_wrong:   .string "SAI ROI! Dap an dung la: "
+msg_timeout: .string "\nHET GIO! Tu dong chuyen cau tiep theo.\n\n"
+msg_result:  .string "\n=== KET QUA ===\n"
+msg_score:   .string "So cau dung: "
+msg_total:   .string " / "
+newline:     .string "\n"
+
+# --- Khai báo số lượng câu hỏi ---
+num_questions: .word 20        # Tổng số câu hỏi là 20 (kiểu word - 4 bytes)
+
+# --- Nội dung câu hỏi và đáp án chi tiết ---
+q1_text: .string "5 + 7 bang bao nhieu?\nA. 10\nB. 11\nC. 12\nD. 13\n"
+q1_ans: .byte 'C'              # Đáp án lưu dưới dạng 1 byte ký tự
+.align 2                       # Căn lề 2^2 = 4 bytes để tối ưu bộ nhớ cho dòng tiếp theo
+
+q2_text: .string "15 - 8 bang bao nhieu?\nA. 5\nB. 6\nC. 7\nD. 8\n"
+q2_ans: .byte 'C'
+.align 2
+
+q3_text: .string "6 x 4 bang bao nhieu?\nA. 20\nB. 22\nC. 24\nD. 26\n"
+q3_ans: .byte 'C'
+.align 2
+
+q4_text: .string "24 / 6 bang bao nhieu?\nA. 3\nB. 4\nC. 5\nD. 6\n"
+q4_ans: .byte 'B'
+.align 2
+
+q5_text: .string "18 + 9 bang bao nhieu?\nA. 25\nB. 26\nC. 27\nD. 28\n"
+q5_ans: .byte 'C'
+.align 2
+
+q6_text: .string "30 - 12 bang bao nhieu?\nA. 16\nB. 17\nC. 18\nD. 19\n"
+q6_ans: .byte 'C'
+.align 2
+
+q7_text: .string "7 x 8 bang bao nhieu?\nA. 54\nB. 56\nC. 58\nD. 60\n"
+q7_ans: .byte 'B'
+.align 2
+
+q8_text: .string "45 / 5 bang bao nhieu?\nA. 8\nB. 9\nC. 10\nD. 11\n"
+q8_ans: .byte 'B'
+.align 2
+
+q9_text: .string "16 + 17 bang bao nhieu?\nA. 31\nB. 32\nC. 33\nD. 34\n"
+q9_ans: .byte 'C'
+.align 2
+
+q10_text: .string "50 - 25 bang bao nhieu?\nA. 20\nB. 25\nC. 30\nD. 35\n"
+q10_ans: .byte 'B'
+.align 2
+
+q11_text: .string "Tu nao viet dung chinh ta?\nA. Hoc sinh\nB. Hoc synh\nC. Hoc xinh\nD. Hoc sin\n"
+q11_ans: .byte 'B'
+.align 2
+
+q12_text: .string "Tieng Viet co bao nhieu nguyen am co ban?\nA. 5\nB. 10\nC. 12\nD. 17\n"
+q12_ans: .byte 'C'
+.align 2
+
+q13_text: .string "Tu nao la danh tu?\nA. Chay\nB. Dep\nC. Ban hoc\nD. Nhanh\n"
+q13_ans: .byte 'C'
+.align 2
+
+q14_text: .string "Tu dong nghia voi \"cham chi\" la?\nA. Sieng nang\nB. Luoi bieng\nC. Cham chap\nD. Tre nai\n"
+q14_ans: .byte 'A'
+.align 2
+
+q15_text: .string "Dau cau nao dung de ket thuc cau hoi?\nA. .\nB. ,\nC. !\nD. ?\n"
+q15_ans: .byte 'D'
+.align 2
+
+q16_text: .string "Trong cau \"Em di hoc\", tu nao la dong tu?\nA. Em\nB. Di\nC. Hoc\nD. Em di\n"
+q16_ans: .byte 'B'
+.align 2
+
+q17_text: .string "Tu trai nghia voi \"cao\" la?\nA. Dai\nB. Rong\nC. Thap\nD. Lon\n"
+q17_ans: .byte 'C'
+.align 2
+
+q18_text: .string "Tieng Viet co bao nhieu dau thanh?\nA. 4\nB. 5\nC. 6\nD. 7\n"
+q18_ans: .byte 'C'
+.align 2
+
+q19_text: .string "Tu nao la tinh tu?\nA. Hoc sinh\nB. Chay\nC. Xinh dep\nD. Truong hoc\n"
+q19_ans: .byte 'C'
+.align 2
+
+q20_text: .string "Trong bang chu cai tieng Viet co bao nhieu chu cai?\nA. 26\nB. 27\nC. 28\nD. 29\n"
+q20_ans: .byte 'D'
+.align 2
+
+# Mảng chứa địa chỉ các chuỗi câu hỏi
+questions_array:
+.word q1_text
+.word q2_text
+.word q3_text
+.word q4_text
+.word q5_text
+.word q6_text
+.word q7_text
+.word q8_text
+.word q9_text
+.word q10_text
+.word q11_text
+.word q12_text
+.word q13_text
+.word q14_text
+.word q15_text
+.word q16_text
+.word q17_text
+.word q18_text
+.word q19_text
+.word q20_text
+
+# Mảng chứa đáp án đúng của từng câu tương ứng
+answers_array:
+.byte 'C'
+.byte 'C'
+.byte 'C'
+.byte 'B'
+.byte 'C'
+.byte 'C'
+.byte 'B'
+.byte 'B'
+.byte 'C'
+.byte 'B'
+.byte 'B'
+.byte 'C'
+.byte 'C'
+.byte 'A'
+.byte 'D'
+.byte 'B'
+.byte 'C'
+.byte 'C'
+.byte 'C'
+.byte 'D'
+
+# Bảng mã Hex hiển thị các số từ 0-9 trên LED 7 đoạn
+digit_table:
+.byte 0x3F    # Số 0
+.byte 0x06    # Số 1
+.byte 0x5B    # Số 2
+.byte 0x4F    # Số 3
+.byte 0x66    # Số 4
+.byte 0x6D    # Số 5
+.byte 0x7D    # Số 6
+.byte 0x07    # Số 7
+.byte 0x7F    # Số 8
+.byte 0x6F    # Số 9
+
+.text
+.globl main
+
+# =================================================================
+# HÀM CHÍNH (MAIN LOOP) - HIỂN THỊ MENU VÀ XỬ LÝ LỰA CHỌN
+# =================================================================
+main:
+    # --- Hiển thị tiêu đề Menu ---
+    la a0, menu_title           # Tải địa chỉ chuỗi menu_title vào a0
+    li a7, 4                    # Gán mã dịch vụ ecall = 4 (In chuỗi ký tự - Print String)
+    ecall                       # Thực hiện gọi hệ thống để in tiêu đề
+
+    # --- Hiển thị lựa chọn 1 ---
+    la a0, menu_opt1            # Tải địa chỉ chuỗi menu_opt1 vào a0
+    ecall                       # Thực hiện in lựa chọn 1
+
+    # --- Hiển thị lựa chọn 2 ---
+    la a0, menu_opt2            # Tải địa chỉ chuỗi menu_opt2 vào a0
+    ecall                       # Thực hiện in lựa chọn 2
+
+    # --- Hiển thị dòng yêu cầu nhập ---
+    la a0, menu_choos           # Tải địa chỉ chuỗi menu_choos vào a0
+    ecall                       # Thực hiện in dòng yêu cầu nhập
+
+    # --- Đọc lựa chọn từ bàn phím (Xác thực dữ liệu) ---
+    li a7, 12                   # Gán mã dịch vụ ecall = 12 (Đọc 1 ký tự từ bàn phím - Read Char)
+    ecall                       # Thực hiện ecall, ký tự nhập về sẽ nằm ở thanh ghi a0
+    mv t0, a0                   # Di chuyển (sao chép) ký tự vừa nhập từ a0 sang thanh ghi t0
+
+    # --- Kiểm tra nếu người dùng chọn '1' ---
+    li t1, '1'                  # Tải ký tự mã ASCII của '1' vào t1
+    beq t0, t1, start_quiz      # Nếu t0 == t1 ('1'), nhảy đến nhãn start_quiz để bắt đầu thi
+
+    # --- Kiểm tra nếu người dùng chọn '2' ---
+    li t1, '2'                  # Tải ký tự mã ASCII của '2' vào t1
+    beq t0, t1, exit_program    # Nếu t0 == t1 ('2'), nhảy đến nhãn exit_program để thoát
+
+    # --- Xử lý khi nhập sai (Không phải '1' hoặc '2') ---
+    la a0, msg_err              # Tải địa chỉ chuỗi thông báo lỗi nhập liệu vào a0
+    li a7, 4                    # Gán mã dịch vụ ecall = 4 (In chuỗi ký tự)
+    ecall                       # Thực hiện in thông báo lỗi lên màn hình mặc định
+    j main                      # Nhảy không điều kiện quay lại nhãn main để hiện lại Menu
+
+# =================================================================
+# CHƯƠNG TRÌNH CON: BẮT ĐẦU VÀ QUẢN LÝ VÒNG LẶP THI
+# =================================================================
+start_quiz:
+    # --- In thông báo chào mừng bắt đầu thi ---
+    la a0, msg_welcome          # Tải địa chỉ chuỗi msg_welcome vào a0
+    li a7, 4                    # Gán mã dịch vụ ecall = 4 (In chuỗi ký tự)
+    ecall                       # Thực hiện in thông báo chào mừng
+
+    # --- Khởi tạo các biến điều khiển vòng lặp thi ---
+    li s0, 0                    # s0 = Chỉ số câu hỏi hiện tại (bắt đầu từ index = 0)
+    lw s1, num_questions        # s1 = Load giá trị tổng số câu hỏi từ ô nhớ num_questions (20)
+    li s2, 0                    # s2 = Số câu trả lời đúng (Khởi tạo điểm số bằng 0)
+
+    # --- Gọi hàm trộn thứ tự câu hỏi ---
+    jal ra, shuffle_questions   # Nhảy đến hàm shuffle_questions và lưu địa chỉ trả về vào ra
+
+quiz_loop:
+    beq s0, s1, quiz_end        # Nếu s0 == s1 (đã duyệt qua hết 20 câu), nhảy tới kết thúc quiz_end
+    
+    # --- Lấy địa chỉ của chuỗi văn bản câu hỏi hiện tại từ mảng ---
+    la t0, questions_array      # Tải địa chỉ cơ sở của mảng câu hỏi questions_array vào t0
+    slli t1, s0, 2              # t1 = s0 * 4 (Mỗi địa chỉ con trỏ trong mảng rộng 4 bytes - dịch trái 2 bit)
+    add t0, t0, t1              # t0 = t0 + t1 (Tính địa chỉ tuyệt đối của phần tử thứ s0 trong mảng)
+    lw a0, 0(t0)                # a0 = Đọc giá trị (địa chỉ chuỗi câu hỏi) từ ô nhớ t0 đang trỏ tới
+    
+    # --- Xuất câu hỏi ra MMIO Display thay vì console tiêu chuẩn ---
+    jal ra, mmio_print_string   # Gọi hàm mmio_print_string để in nội dung câu hỏi ra MMIO
+
+    # --- Thiết lập bộ đếm thời gian ngược (10 giây) ---
+    li s3, 10                   # s3 = 10 (Biến lưu số giây đếm ngược còn lại cho câu hỏi hiện tại)
+    
+    mv a0, s3                   # Sao chép số giây s3 vào tham số a0
+    jal ra, display_countdown   # Gọi hàm display_countdown để cập nhật số 10 lên LED 7 đoạn
+
+input_countdown_loop:
+    # --- Thăm dò (Polling) xem người dùng đã nhấn phím nào chưa ---
+    li t0, MMIO_CTRL            # Tải địa chỉ thanh ghi điều khiển bàn phím vào t0
+    lw t1, 0(t0)                # Đọc giá trị trạng thái từ địa chỉ MMIO_CTRL vào t1
+    andi t1, t1, 1              # Lọc lấy bit cuối cùng (Bit Ready - bit 0 của Keyboard Control)
+    bnez t1, process_input      # Nếu bit Ready != 0 (đã có phím bấm), nhảy đến xử lý ký tự process_input
+
+    # --- Nếu chưa bấm phím: Thực hiện trì hoãn (Delay) 1 giây ---
+    li a0, 1000                 # Tham số a0 = 1000 (thời gian tính bằng mili-giây: 1000ms = 1s)
+    li a7, 32                   # Gán mã dịch vụ ecall = 32 (Hàm ngủ/trì hoãn - Sleep)
+    ecall                       # Thực thi lệnh ngủ 1 giây
+    
+    addi s3, s3, -1             # Giảm biến đếm ngược thời gian đi 1 đơn vị (s3 = s3 - 1)
+    mv a0, s3                   # Đưa số giây còn lại s3 vào tham số a0
+    jal ra, display_countdown   # Gọi hàm hiển thị số giây còn lại lên bộ LED 7 đoạn
+    bnez s3, input_countdown_loop # Nếu s3 != 0 (chưa hết 10 giây), lặp lại việc kiểm tra phím bấm
+
+    # --- Trường hợp xử lý khi HẾT GIỜ (s3 == 0) ---
+    la a0, msg_timeout          # Tải địa chỉ chuỗi thông báo hết giờ msg_timeout vào a0
+    li a7, 4                    # Gán mã dịch vụ ecall = 4 (In chuỗi ký tự thông thường)
+    ecall                       # In chuỗi báo hết giờ lên màn hình console
+    j next_question             # Nhảy bỏ qua phần kiểm tra đáp án để chuyển thẳng sang câu tiếp theo
+
+process_input:
+    # --- Lấy ký tự vừa được gõ từ bộ đệm MMIO Bàn phím ---
+    li t0, MMIO_DATA            # Tải địa chỉ thanh ghi dữ liệu bàn phím vào t0
+    lw s4, 0(t0)                # Đọc mã ASCII của ký tự người dùng vừa nhập vào thanh ghi s4
+
+check_valid:
+    # --- Chuyển đổi phím số '1', '2', '3', '4' sang dạng ký tự chữ 'A', 'B', 'C', 'D' ---
+    li t0, '1'                  # Tải mã ASCII ký tự '1' vào t0
+    beq s4, t0, convert_A       # Nếu s4 == '1', nhảy đến nhãn convert_A
+
+    li t0, '2'                  # Tải mã ASCII ký tự '2' vào t0
+    beq s4, t0, convert_B       # Nếu s4 == '2', nhảy đến nhãn convert_B
+
+    li t0, '3'                  # Tải mã ASCII ký tự '3' vào t0
+    beq s4, t0, convert_C       # Nếu s4 == '3', nhảy đến nhãn convert_C
+
+    li t0, '4'                  # Tải mã ASCII ký tự '4' vào t0
+    beq s4, t0, convert_D       # Nếu s4 == '4', nhảy đến nhãn convert_D
+
+    # --- Kiểm tra tính hợp lệ nếu người dùng nhập thẳng chữ cái ---
+    li t0, 'A'                  # Tải mã ASCII ký tự 'A' vào t0
+    blt s4, t0, invalid_input   # Nếu s4 < 'A' (Mã ASCII nhỏ hơn), nhảy đến báo lỗi nhập liệu invalid_input
+
+    li t0, 'D'                  # Tải mã ASCII ký tự 'D' vào t0
+    bgt s4, t0, invalid_input   # Nếu s4 > 'D' (Mã ASCII lớn hơn), nhảy đến báo lỗi nhập liệu invalid_input
+
+    j compare_answer            # Nếu ký tự nằm trong khoảng ['A'..'D'], nhảy thẳng đến so sánh đáp án
+
+convert_A:
+    li s4, 'A'                  # Gán giá trị ký tự chữ 'A' vào thanh ghi s4
+    j compare_answer            # Nhảy tiếp đến phần so sánh đáp án
+
+convert_B:
+    li s4, 'B'                  # Gán giá trị ký tự chữ 'B' vào thanh ghi s4
+    j compare_answer            # Nhảy tiếp đến phần so sánh đáp án
+
+convert_C:
+    li s4, 'C'                  # Gán giá trị ký tự chữ 'C' vào thanh ghi s4
+    j compare_answer            # Nhảy tiếp đến phần so sánh đáp án
+
+convert_D:
+    li s4, 'D'                  # Gán giá trị ký tự chữ 'D' vào thanh ghi s4
+    j compare_answer            # Nhảy tiếp đến phần so sánh đáp án
+
+invalid_input:
+    # --- Thông báo lỗi khi người dùng bấm phím không hợp lệ ---
+    la a0, msg_err              # Tải địa chỉ chuỗi thông báo nhập sai msg_err vào a0
+    li a7, 4                    # Gán mã dịch vụ ecall = 4 (In chuỗi ký tự thông thường)
+    ecall                       # Thực hiện lệnh in thông báo lỗi nhập liệu lên console
+    j input_countdown_loop      # Quay trở lại vòng lặp chờ gõ phím tiếp (giữ nguyên thời gian đếm ngược)
+
+compare_answer:
+    # --- Lấy nội dung đáp án đúng thực tế của câu hỏi hiện tại ---
+    la t0, answers_array        # Tải địa chỉ cơ sở của mảng đáp án answers_array vào t0
+    add t0, t0, s0              # t0 = t0 + s0 (Do mỗi phần tử đáp án chỉ rộng 1 byte nên không cần nhân dịch bit)
+    lbu s5, 0(t0)               # Đọc 1 byte không dấu (đáp án đúng thực tế) từ địa chỉ t0 lưu vào s5
+
+    beq s4, s5, answer_correct  # So sánh: Nếu s4 (bấm) == s5 (đáp án đúng), nhảy đến phần xử lý đúng câu hỏi
+
+    # --- TRƯỜNG HỢP TRẢ LỜI SAI ---
+    la a0, msg_wrong            # Tải địa chỉ chuỗi thông báo trả lời sai msg_wrong vào a0
+    jal ra, mmio_print_string   # Xuất chuỗi thông báo sai ra MMIO Display Tool
+    
+    # --- In ký tự chữ cái đáp án đúng thực tế kế tiếp ---
+    mv a0, s5                   # Đưa mã ký tự đáp án đúng trong s5 vào tham số a0
+    jal ra, mmio_print_char     # Xuất ký tự đáp án đúng đó ra màn hình MMIO Display
+    la a0, newline              # Tải địa chỉ chuỗi xuống dòng newline vào a0
+    jal ra, mmio_print_string   # Xuất lệnh xuống dòng ra MMIO Display
+    
+    la a0, newline              # Tiếp tục tải chuỗi xuống dòng tạo khoảng cách
+    jal ra, mmio_print_string   # Xuất chuỗi xuống dòng ra MMIO Display
+    
+    j next_question             # Nhảy đến nhãn xử lý để chuyển sang câu tiếp theo
+    
+answer_correct:
+    # --- TRƯỜNG HỢP TRẢ LỜI ĐÚNG ---
+    la a0, msg_correct          # Tải địa chỉ chuỗi thông báo chúc mừng msg_correct vào a0
+    jal ra, mmio_print_string   # Xuất chuỗi chúc mừng ra màn hình MMIO Display
+    addi s2, s2, 1              # Tăng biến đếm tổng số câu trả lời đúng lên 1 đơn vị (s2 = s2 + 1)
+
+next_question:
+    # --- Tắt/Xóa nội dung hiển thị trên 2 đèn LED 7 đoạn trước khi qua câu mới ---
+    li t0, DIGIT_LEFT           # Tải địa chỉ thanh ghi LED trái vào t0
+    sb zero, 0(t0)              # Ghi giá trị 0 (tắt hết các đoạn LED) vào địa chỉ LED trái
+
+    li t0, DIGIT_RIGHT          # Tải địa chỉ thanh ghi LED phải vào t0
+    sb zero, 0(t0)              # Ghi giá trị 0 (tắt hết các đoạn LED) vào địa chỉ LED phải
+
+    addi s0, s0, 1              # Tăng chỉ số câu hỏi hiện tại lên 1 để chuẩn bị (s0 = s0 + 1)
+    j quiz_loop                 # Quay trở lại đầu vòng lặp thi để load câu hỏi tiếp theo
+
+quiz_end:
+    # --- HIỂN THỊ TỔNG KẾT KẾT QUẢ ĐIỂM THI ---
+    la a0, msg_result           # Tải địa chỉ chuỗi tiêu đề kết quả msg_result vào a0
+    jal ra, mmio_print_string   # Xuất chuỗi tiêu đề kết quả ra MMIO Display
+    
+    la a0, msg_score            # Tải địa chỉ chuỗi thông báo số câu đúng msg_score vào a0
+    jal ra, mmio_print_string   # Xuất chuỗi "So cau dung: " ra MMIO Display
+    
+    mv a0, s2                   # Đưa giá trị điểm số (số câu đúng) s2 vào tham số a0
+    jal ra, mmio_print_int      # Gọi hàm mmio_print_int để chuyển số và in ra MMIO Display
+    
+    la a0, msg_total            # Tải địa chỉ chuỗi ký tự phân tách dấu xuyệt " / "
+    jal ra, mmio_print_string   # Xuất chuỗi dấu xuyệt phân tách ra MMIO Display
+    
+    lw a0, num_questions        # Đọc giá trị tổng số lượng câu hỏi từ ô nhớ vào tham số a0
+    jal ra, mmio_print_int      # Gọi hàm in số nguyên xuất tổng số câu hỏi ra MMIO Display
+    
+    la a0, newline              # Tải địa chỉ chuỗi ký tự xuống dòng newline vào a0
+    jal ra, mmio_print_string   # Xuất chuỗi xuống dòng hoàn tất dòng kết quả
+    
+    j main                      # Vòng lặp vô hạn: Quay trở lại Menu chính ban đầu chứ không tắt hẳn
+
+# =================================================================
+# CÁC CHƯƠNG TRÌNH CON PHỤ (HELPER FUNCTIONS)
+# =================================================================
+
+# --- Hàm xuất chuỗi ký tự (String) ra công cụ MMIO Display Tool ---
+mmio_print_string:
+    mv t2, a0                   # Lưu địa chỉ gốc của chuỗi từ tham số a0 sang thanh ghi t2
+mmio_char_loop:
+    lbu t3, 0(t2)               # Đọc 1 byte ký tự từ ô nhớ t2 trỏ tới lưu vào t3
+    beqz t3, mmio_print_end     # Nếu t3 == 0 (Gặp ký tự rỗng '\0' kết thúc chuỗi), kết thúc hàm
+
+wait_display_ready:
+    li t0, MMIO_DCTRL           # Tải địa chỉ điều khiển màn hình hiển thị MMIO vào t0
+    lw t1, 0(t0)                # Đọc trạng thái thanh ghi hiển thị vào t1
+    andi t1, t1, 1              # Trích xuất bit Ready (bit số 0) của Display Control
+    beqz t1, wait_display_ready # Nếu bit Ready == 0 (màn hình đang bận), lặp lại vòng chờ polling
+
+    li t0, MMIO_DDATA           # Tải địa chỉ dữ liệu màn hình hiển thị MMIO vào t0
+    sw t3, 0(t0)                # Ghi mã ký tự từ t3 vào thanh ghi dữ liệu hiển thị MMIO_DDATA để xuất chữ
+
+    addi t2, t2, 1              # Tăng địa chỉ con trỏ chuỗi t2 thêm 1 byte để chỉ tới ký tự tiếp theo
+    j mmio_char_loop            # Lặp lại vòng xử lý ký tự tiếp theo
+    
+# --- Hàm xuất một ký tự đơn (Char) ra công cụ MMIO Display Tool ---
+mmio_print_char:
+wait_mmio_char:
+    li t0, MMIO_DCTRL           # Tải địa chỉ điều khiển màn hình hiển thị MMIO vào t0
+    lw t1, 0(t0)                # Đọc trạng thái thanh ghi hiển thị vào t1
+    andi t1, t1, 1              # Trích xuất kiểm tra bit Ready (bit số 0)
+    beqz t1, wait_mmio_char     # Nếu bit Ready == 0 (màn hình bận), tiếp tục vòng chờ polling
+
+    li t0, MMIO_DDATA           # Tải địa chỉ dữ liệu màn hình hiển thị MMIO vào t0
+    sw a0, 0(t0)                # Ghi mã ký tự truyền vào từ tham số a0 vào ô nhớ dữ liệu MMIO để hiển thị
+    ret                         # Quay trở về nơi gọi hàm
+
+mmio_print_end:
+    ret                         # Quay trở về nơi gọi hàm hiển thị chuỗi
+
+# --- Hàm tách và xuất số nguyên (Integer) ra công cụ MMIO Display Tool ---
+mmio_print_int:
+    addi sp, sp, -20            # Mở rộng bộ nhớ vùng đệm Stack (Cấp phát 20 bytes)
+    sw ra, 16(sp)               # Lưu địa chỉ trở về ra vào Stack để bảo toàn cấu trúc hàm
+    sw t0, 12(sp)               # Lưu giá trị thanh ghi tạm t0 vào Stack
+    sw t1, 8(sp)                # Lưu giá trị thanh ghi tạm t1 vào Stack
+    sw t2, 4(sp)                # Lưu giá trị thanh ghi tạm t2 vào Stack
+    sw s6, 0(sp)                # Lưu giá trị thanh ghi an toàn s6 vào Stack
+    
+    mv s6, sp                   # Ghi nhận và giữ lại vị trí đáy của vùng đệm stack hiện thời vào s6
+
+    li t0, 10                   # Gán giá trị hằng số t0 = 10 để thực hiện phép toán hệ thập phân
+    li s7, 0                    # Khởi tạo biến đếm số lượng chữ số s7 = 0
+
+convert_loop:
+    rem t2, a0, t0              # t2 = a0 % 10 (Lấy ra chữ số ở hàng đơn vị cuối cùng của số nguyên)
+    addi t2, t2, '0'            # Chuyển đổi giá trị số đơn lẻ đó sang ký tự mã ASCII tương ứng
+
+    addi sp, sp, -4             # Đẩy con trỏ Stack lên 4 bytes để tạo không gian lưu chữ số
+    sw t2, 0(sp)                # Cất ký tự chữ số vừa chuyển đổi vào trong Stack
+
+    addi s7, s7, 1              # Tăng biến đếm tổng số lượng chữ số s7 lên thêm 1 đơn vị
+
+    div a0, a0, t0              # a0 = a0 / 10 (Loại bỏ chữ số hàng đơn vị vừa lấy để xét chữ số tiếp theo)
+    bnez a0, convert_loop       # Nếu số nguyên a0 vẫn còn giá trị (!= 0), tiếp tục vòng lặp tách số
+
+print_digits:
+    beqz s7, restore_stack      # Nếu s7 == 0 (Đã in ra hết tất cả các chữ số đã tách), nhảy sang khôi phục Stack
+
+    lw a0, 0(sp)                # Đọc chữ số từ đỉnh của vùng đệm Stack ra thanh ghi tham số a0
+    addi sp, sp, 4              # Thu nhỏ con trỏ Stack về lại 4 bytes (Pop phần tử)
+
+    jal ra, mmio_print_char     # Gọi hàm xuất ký tự vừa lấy ra màn hình MMIO Display
+
+    addi s7, s7, -1             # Giảm số lượng chữ số cần in còn lại đi 1 đơn vị (s7 = s7 - 1)
+    j print_digits              # Tiếp tục lặp để in chữ số tiếp theo ra màn hình
+
+restore_stack:
+    mv sp, s6                   # Khôi phục con trỏ Stack về đúng vị trí đáy ban đầu lưu ở s6
+
+    lw s6, 0(sp)                # Phục hồi giá trị gốc ban đầu của thanh ghi s6 từ Stack
+    lw t2, 4(sp)                # Phục hồi giá trị gốc ban đầu của thanh ghi t2 từ Stack
+    lw t1, 8(sp)                # Phục hồi giá trị gốc ban đầu của thanh ghi t1 từ Stack
+    lw t0, 12(sp)               # Phục hồi giá trị gốc ban đầu của thanh ghi t0 từ Stack
+    lw ra, 16(sp)               # Phục hồi địa chỉ trả về ra gốc ban đầu từ Stack
+
+    addi sp, sp, 20             # Thu hồi hoàn toàn 20 bytes bộ nhớ vùng đệm Stack đã cấp phát
+    ret                         # Trở về hàm gọi trước đó
+
+# --- Thuật toán Fisher-Yates Shuffle: Xáo ngẫu nhiên vị trí các câu hỏi câu trả lời ---
+shuffle_questions:
+
+    # --- Tạo hạt giống ngẫu nhiên (Seed RNG) ---
+    li a7, 30                   # Gán mã dịch vụ ecall = 30 (Lấy thời gian hệ thống hiện tại - System Time)
+    ecall                       # Thực thi, kết quả trả về thời gian nằm ở cặp thanh ghi a0, a1
+    
+    mv a1, a0                   # Lấy thời gian từ a0 làm tham số giá trị hạt giống cho a1
+    li a0, 0                    # Thiết lập mã định danh bộ sinh số ID = 0 vào thanh ghi a0
+    li a7, 40                   # Gán mã dịch vụ ecall = 40 (Thiết lập hạt giống ngẫu nhiên - Set Seed)
+    ecall                       # Kích hoạt thiết lập sinh số ngẫu nhiên ngầm định
+
+    lw t0, num_questions        # Load tổng số lượng câu hỏi (20) từ ô nhớ num_questions vào t0
+    addi t0, t0, -1             # Đặt chỉ số chạy vòng lặp i = num_questions - 1 (t0 = 19)
+
+shuffle_loop:
+    blez t0, shuffle_end        # Vòng lặp chạy lùi: Nếu i (t0) <= 0 thì kết thúc quá trình xáo trộn câu hỏi
+
+    # --- Sinh ra chỉ số ngẫu nhiên j nằm trong khoảng [0 .. i] ---
+    li a0, 0                    # Đặt mã định danh bộ sinh ngẫu nhiên ID = 0 vào a0
+    addi a1, t0, 1              # Giới hạn trên mong muốn a1 = t0 + 1 (Khoảng sinh ngẫu nhiên từ 0 đến dưới a1)
+    li a7, 42                   # Gán mã dịch vụ ecall = 42 (Sinh số nguyên ngẫu nhiên có phạm vi - Rand Int Range)
+    ecall                       # Kết quả số ngẫu nhiên j trả về nằm ở thanh ghi a0
+
+    mv t1, a0                   # Lưu số ngẫu nhiên j vừa sinh từ thanh ghi a0 sang thanh ghi t1
+
+    # --- Hoán đổi giá trị phần tử mảng câu hỏi: questions_array[i] <-> questions_array[j] ---
+    la t2, questions_array      # Tải địa chỉ cơ sở của mảng questions_array vào t2
+
+    slli t3, t0, 2              # t3 = i * 4 (Tính khoảng lệch bytes offset cho phần tử thứ i)
+    add t4, t2, t3              # t4 = Địa chỉ thực tế của phần tử questions_array[i]
+
+    slli t5, t1, 2              # t5 = j * 4 (Tính khoảng lệch bytes offset cho phần tử thứ j ngẫu nhiên)
+    add t6, t2, t5              # t6 = Địa chỉ thực tế của phần tử questions_array[j]
+
+    lw a2, 0(t4)                # Đọc địa chỉ chuỗi câu hỏi tại vị trí i lưu vào thanh ghi temporary a2
+    lw a3, 0(t6)                # Đọc địa chỉ chuỗi câu hỏi tại vị trí j lưu vào thanh ghi temporary a3
+
+    sw a3, 0(t4)                # Ghi giá trị câu hỏi j vào vị trí ô nhớ của câu hỏi i
+    sw a2, 0(t6)                # Ghi giá trị câu hỏi i vào vị trí ô nhớ của câu hỏi j
+
+    # --- Hoán đổi giá trị phần tử mảng đáp án song song: answers_array[i] <-> answers_array[j] ---
+    la t2, answers_array        # Tải địa chỉ cơ sở của mảng dữ liệu đáp án answers_array vào t2
+
+    add t4, t2, t0              # t4 = Địa chỉ thực tế phần tử answers_array[i] (Mỗi phần tử rộng đúng 1 byte)
+    add t6, t2, t1              # t6 = Địa chỉ thực tế phần tử answers_array[j] (Mỗi phần tử rộng đúng 1 byte)
+
+    lbu a2, 0(t4)               # Đọc 1 byte đáp án tại vị trí i lưu vào thanh ghi a2
+    lbu a3, 0(t6)               # Đọc 1 byte đáp án tại vị trí j lưu vào thanh ghi a3
+
+    sb a3, 0(t4)                # Ghi giá trị đáp án j thế vào ô nhớ của đáp án i
+    sb a2, 0(t6)                # Ghi giá trị đáp án i thế vào ô nhớ của đáp án j
+
+    addi t0, t0, -1             # Giảm chỉ số vòng lặp i đi 1 đơn vị (i--) để xét cặp phần tử tiếp theo
+    j shuffle_loop              # Tiếp tục quay lại thực hiện vòng lặp xáo trộn phần tử tiếp theo
+
+shuffle_end:
+    ret                         # Hoàn thành thuật toán hoán đổi xáo trộn, quay về chương trình gọi
+
+# --- Hàm hiển thị số giây đếm ngược lên 2 Bộ Đèn LED 7 Đoạn ---
+display_countdown:
+    li t0, 10                   # Tải hằng số chia t0 = 10 vào để thực hiện bóc tách hai chữ số
+
+    div t1, a0, t0              # t1 = a0 / 10 (Lấy ra chữ số ở hàng chục của thời gian giây truyền vào)
+    rem t2, a0, t0              # t2 = a0 % 10 (Lấy ra chữ số ở hàng đơn vị của thời gian giây truyền vào)
+
+    la t3, digit_table          # Tải địa chỉ cơ sở của bảng mã Hex hiển thị LED (digit_table) vào t3
+
+    add t4, t3, t1              # t4 = Vị trí chứa mã Hex của chữ số hàng chục trong bảng mã
+    lbu t5, 0(t4)               # Đọc mã hiển thị LED tương ứng của chữ số hàng chục vào thanh ghi t5
+
+    add t4, t3, t2              # t4 = Vị trí chứa mã Hex của chữ số hàng đơn vị trong bảng mã
+    lbu t6, 0(t4)               # Đọc mã hiển thị LED tương ứng của chữ số hàng đơn vị vào thanh ghi t6
+
+    li t4, DIGIT_LEFT           # Tải địa chỉ cổng phần cứng điều khiển LED bên trái vào t4
+    sb t5, 0(t4)                # Ghi mã Hex t5 vào cổng phần cứng để hiển thị chữ số hàng chục lên LED trái
+
+    li t4, DIGIT_RIGHT          # Tải địa chỉ cổng phần cứng điều khiển LED bên phải vào t4
+    sb t6, 0(t4)                # Ghi mã Hex t6 vào cổng phần cứng để hiển thị chữ số hàng đơn vị lên LED phải
+
+    ret                         # Quay trở về nơi gọi hàm đếm ngược hiển thị
+
+# Hàm thoát chương trình an toàn
+exit_program:
+    li a7, 10                   # Gán mã dịch vụ ecall = 10 (Hàm dừng và thoát chương trình - Terminate/Exit)
+    ecall                       # Thực thi lệnh gọi hệ thống để tắt chương trình mô phỏng một cách an toàn
