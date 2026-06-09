@@ -18,7 +18,7 @@
 .data
     cmd_buffer:  .space 64          # Bộ đệm lưu trữ chuỗi lệnh (tối đa 64 ký tự)
     fill_stack:  .space 524288      # Vùng nhớ stack phục vụ thuật toán tô màu
-    current_color: .word 0xFF0000FF # Màu mặc định ban đầu (BLUE)
+    current_color: .word -1         # Màu mặc định ban đầu của hệ thống
     
     # Chuỗi phản hồi hiển thị trên Display MMIO
     msg_valid:   .asciz "Lenh dung!\n"   # Thông báo khi lệnh đúng cú pháp
@@ -437,7 +437,7 @@ dy_ready:
     sub t4, t0, t1                  # t4 = err = dx - dy
 
 loop_pixels:
-    # Kiểm tra giới hạn màn hình bảo vệ bộ nhớ (0 <= x < 512, 0 <= y < 256)
+    # Kiểm tra giới hạn màn hình bảo vệ bộ nhớ (0 <= x < 256, 0 <= y < 256)
     bltz s0, skip_pixel             # Nếu x0 < 0, bỏ qua không vẽ pixel này
     li t5, DISPLAY_WIDTH            # t5 = Chiều rộng màn hình
     bge s0, t5, skip_pixel          # Nếu x0 >= DISPLAY_WIDTH, bỏ qua không vẽ
@@ -445,7 +445,7 @@ loop_pixels:
     li t5, DISPLAY_HEIGHT           # t5 = Chiều cao màn hình
     bge s1, t5, skip_pixel          # Nếu y0 >= DISPLAY_HEIGHT, bỏ qua không vẽ
 
-    # Tính toán địa chỉ ô nhớ pixel: Base + (y * 512 + x) * 4
+    # Tính toán địa chỉ ô nhớ pixel: Base + (y * 256 + x) * 4
     li t5, DISPLAY_WIDTH            # t5 = Chiều rộng màn hình
     mul t6, s1, t5                  # t6 = y0 * DISPLAY_WIDTH
     add t6, t6, s0                  # t6 = (y0 * DISPLAY_WIDTH) + x0
