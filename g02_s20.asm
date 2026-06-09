@@ -15,7 +15,7 @@
 .eqv COLOR_RED          0xFFFF0000  # Mã màu Đỏ
 .eqv COLOR_GREEN        0xFF00FF00  # Mã màu Xanh lá
 
-.data
+.data 0x10050000
     cmd_buffer:  .space 64          # Bộ đệm lưu trữ chuỗi lệnh (tối đa 64 ký tự)
     fill_stack:  .space 524288      # Vùng nhớ stack phục vụ thuật toán tô màu
     current_color: .word -1         # Màu mặc định ban đầu của hệ thống
